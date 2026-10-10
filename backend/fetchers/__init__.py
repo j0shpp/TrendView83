@@ -1,0 +1,1 @@
+# TrendView83 fetchers package
