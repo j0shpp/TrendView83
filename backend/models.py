@@ -13,6 +13,7 @@ class Sentiment(str, Enum):
 class SourceType(str, Enum):
     REDDIT = "reddit"
     NEWS = "news"
+    STOCKTWITS = "stocktwits"
 
 
 class Mention(BaseModel):
@@ -45,9 +46,20 @@ class TrendingTicker(BaseModel):
     mentions: list[Mention]
     snapshot: Optional[TickerSnapshot] = None
     rank: int
+    is_staple: bool = False
+
+
+class StapleSnapshot(BaseModel):
+    ticker: str
+    price: Optional[float] = None
+    change: Optional[float] = None
+    change_percent: Optional[float] = None
+    volume: Optional[int] = None
+    market_cap: Optional[int] = None
 
 
 class TrendingResponse(BaseModel):
     trending: list[TrendingTicker]
     last_updated: datetime
     total_mentions: int
+    staples: list[StapleSnapshot] = []

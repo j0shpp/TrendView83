@@ -3,12 +3,14 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fetchers.reddit import fetch_reddit_mentions
 from fetchers.news import fetch_news_mentions
+from fetchers.stocktwits import fetch_stocktwits_mentions
 from fetchers.yfinance import fetch_multiple_snapshots
 from models import (
     Mention, TrendingTicker, TrendingResponse,
     Sentiment, SourceType
 )
 from config import settings
+from data.consumer_staples import is_consumer_staple, get_staples_tickers
 
 
 def aggregate_mentions(mentions: list[Mention], max_age_hours: int = 24) -> dict[str, list[Mention]]:
@@ -59,7 +61,8 @@ async def build_trending_response() -> TrendingResponse:
     # Fetch mentions from all sources
     reddit_mentions = await fetch_reddit_mentions()
     news_mentions = await fetch_news_mentions()
-    all_mentions = reddit_mentions + news_mentions
+    stocktwits_mentions = await fetch_stocktwits_mentions()
+    all_mentions = reddit_mentions + news_mentions + stocktwits_mentions
 
     # Group by ticker
     grouped = aggregate_mentions(all_mentions)
@@ -79,6 +82,7 @@ async def build_trending_response() -> TrendingResponse:
             sentiment=sentiment,
             mentions=sorted(mentions, key=lambda m: m.timestamp, reverse=True)[:10],
             rank=0,
+            is_staple=is_consumer_staple(ticker),
         ))
 
     # Sort by mention count * sentiment strength
@@ -92,6 +96,13 @@ async def build_trending_response() -> TrendingResponse:
     top_tickers = [t.ticker for t in trending[:25]]
     snapshots = await fetch_multiple_snapshots(top_tickers)
 
+    # Also fetch staples price data (for dedicated staples view) - limit to top 20 to avoid rate limits
+    staples_tickers = get_staples_tickers()
+    staples_price_tickers = staples_tickers[:20]  # Only fetch prices for top 20
+    print(f"Fetching price data for {len(staples_price_tickers)} staples tickers...")
+    staples_snapshots = await fetch_multiple_snapshots(staples_price_tickers)
+    print(f"Got {len(staples_snapshots)} staples snapshots")
+
     # Only keep tickers that have valid snapshots
     valid_trending = []
     for t in trending:
@@ -101,8 +112,33 @@ async def build_trending_response() -> TrendingResponse:
         elif len(valid_trending) < 15:  # Keep some without snapshots if we don't have enough
             valid_trending.append(t)
 
+    # Add staples data to response (include all tickers, with prices where available)
+    staples_data = []
+    for ticker in staples_tickers:
+        if ticker in staples_snapshots:
+            snap = staples_snapshots[ticker]
+            staples_data.append({
+                "ticker": ticker,
+                "price": snap.price,
+                "change": snap.change,
+                "change_percent": snap.change_percent,
+                "volume": snap.volume,
+                "market_cap": snap.market_cap,
+            })
+        else:
+            # Include ticker without price data
+            staples_data.append({
+                "ticker": ticker,
+                "price": None,
+                "change": None,
+                "change_percent": None,
+                "volume": None,
+                "market_cap": None,
+            })
+
     return TrendingResponse(
         trending=valid_trending[:20],
         last_updated=datetime.now(timezone.utc),
         total_mentions=len(all_mentions),
+        staples=staples_data,
     )
